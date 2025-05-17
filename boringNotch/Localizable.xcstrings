@@ -88,9 +88,6 @@
     "Additional features" : {
 
     },
-    "AI Assistant" : {
-
-    },
     "AirDrop" : {
 
     },
@@ -455,9 +452,6 @@
         }
       }
     },
-    "Install XcodeBuildMCP" : {
-
-    },
     "Installed extensions" : {
 
     },
@@ -645,6 +639,9 @@
         }
       }
     },
+    "Open Goose in Terminal" : {
+
+    },
     "Open System Settings" : {
 
     },
@@ -753,9 +750,6 @@
         }
       }
     },
-    "Setup Required" : {
-
-    },
     "Shelf" : {
 
     },
@@ -856,6 +850,9 @@
     "System features" : {
 
     },
+    "Terminal opened with Goose.\nPlease check the Terminal window and interact there." : {
+
+    },
     "TheBoringNotch" : {
 
     },
@@ -919,9 +916,6 @@
 
     },
     "What's New" : {
-
-    },
-    "XcodeBuildMCP needs to be installed first to enable AI assistance" : {
 
     },
     "YouTube Music requires this third-party app to be installed: " : {
