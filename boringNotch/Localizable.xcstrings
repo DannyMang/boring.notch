@@ -88,6 +88,9 @@
     "Additional features" : {
 
     },
+    "AI Assistant" : {
+
+    },
     "AirDrop" : {
 
     },
@@ -452,6 +455,9 @@
         }
       }
     },
+    "Install XcodeBuildMCP" : {
+
+    },
     "Installed extensions" : {
 
     },
@@ -459,6 +465,9 @@
 
     },
     "License key" : {
+
+    },
+    "Listening... Tap to stop" : {
 
     },
     "Lottie JSON URL" : {
@@ -665,6 +674,9 @@
     "Progressbar style" : {
 
     },
+    "Push to talk" : {
+
+    },
     "Quit" : {
       "localizations" : {
         "en" : {
@@ -740,6 +752,9 @@
           }
         }
       }
+    },
+    "Setup Required" : {
+
     },
     "Shelf" : {
 
@@ -844,6 +859,9 @@
     "TheBoringNotch" : {
 
     },
+    "Thinking..." : {
+
+    },
     "Time to Full Charge: %lld min" : {
 
     },
@@ -901,6 +919,9 @@
 
     },
     "What's New" : {
+
+    },
+    "XcodeBuildMCP needs to be installed first to enable AI assistance" : {
 
     },
     "YouTube Music requires this third-party app to be installed: " : {

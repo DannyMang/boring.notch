@@ -245,12 +245,7 @@ struct ContentView: View {
               
               ZStack {
                   if vm.notchState == .open {
-                      switch coordinator.currentView {
-                          case .home:
-                              NotchHomeView(albumArtNamespace: albumArtNamespace)
-                          case .shelf:
-                              NotchShelfView()
-                      }
+                      mainContent
                   }
               }
               .zIndex(1)
@@ -488,6 +483,36 @@ struct ContentView: View {
             }
         }
     }
+
+    private var mainContent: some View {
+        HStack(alignment: .top, spacing: 20) {
+            switch coordinator.currentView {
+            case .home:
+                MusicPlayerView(albumArtNamespace: albumArtNamespace)
+                if Defaults[.showCalendar] {
+                    CalendarView()
+                        .onHover { isHovering in
+                            vm.isHoveringCalendar = isHovering
+                        }
+                        .environmentObject(vm)
+                }
+                if Defaults[.showMirror] && webcamManager.cameraAvailable {
+                    CameraPreviewView(webcamManager: webcamManager)
+                        .scaledToFit()
+                        .opacity(vm.notchState == .closed ? 0 : 1)
+                        .blur(radius: vm.notchState == .closed ? 20 : 0)
+                }
+            case .shelf:
+                NotchShelfView()
+            case .voice:
+                VoiceAssistantView()
+            }
+        }
+        .transition(.opacity.animation(.smooth.speed(0.9))
+            .combined(with: .blurReplace.animation(.smooth.speed(0.9)))
+            .combined(with: .move(edge: .top)))
+        .blur(radius: vm.notchState == .closed ? 30 : 0)
+    }
 }
 
 struct FullScreenDropDelegate: DropDelegate {
@@ -507,4 +532,254 @@ struct FullScreenDropDelegate: DropDelegate {
         onDrop()
         return true
     }
+}
+
+struct VoiceAssistantView: View {
+    @State private var isRecording = false
+    @State private var response: String? = nil
+    @State private var isProcessing = false
+    @State private var recordingTimer: Timer? = nil
+    @State private var terminalOpened = false
+    @State private var setupComplete = false
+    @State private var setupMessage = "XcodeBuildMCP not set up yet"
+
+    var body: some View {
+        VStack {
+            Text("AI Assistant")
+                .font(.headline)
+                .padding(.top, 20)
+                
+            if !setupComplete {
+                VStack(spacing: 10) {
+                    Text("Setup Required")
+                        .font(.title3)
+                        .padding(.top, 10)
+                    
+                    Text("XcodeBuildMCP needs to be installed first to enable AI assistance")
+                        .font(.body)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                    
+                    Button("Install XcodeBuildMCP") {
+                        installMCPServer()
+                    }
+                    .padding()
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(10)
+                    .padding(.top, 10)
+                    
+                    Text(setupMessage)
+                        .font(.footnote)
+                        .foregroundColor(.gray)
+                        .multilineTextAlignment(.center)
+                        .padding()
+                }
+                .padding()
+            } else {
+                Spacer()
+                Button(action: {
+                    if !isRecording {
+                        startRecording()
+                    } else {
+                        stopRecordingAndProcess()
+                    }
+                }) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.black)
+                            .frame(width: 80, height: 80)
+                            .shadow(radius: 10)
+                        Image(systemName: isRecording ? "mic.fill" : "mic.circle.fill")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 60, height: 60)
+                            .foregroundColor(.white)
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.bottom, 8)
+                
+                Text(isRecording ? "Listening... Tap to stop" : "Push to talk")
+                    .font(.headline)
+                    .foregroundColor(.gray)
+                
+                if isRecording {
+                    RecordingIndicator()
+                        .padding(.top, 8)
+                }
+                
+                if isProcessing {
+                    ProgressView("Thinking...")
+                        .padding(.top, 16)
+                }
+                
+                if let responseText = response {
+                    Text(responseText)
+                        .font(.body)
+                        .foregroundColor(.white)
+                        .padding(.top, 16)
+                        .padding(.horizontal)
+                        .multilineTextAlignment(.center)
+                }
+                
+                Spacer()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onAppear {
+            checkMCPSetup()
+        }
+    }
+    
+    func checkMCPSetup() {
+        // Check if mise is installed
+        let task = Process()
+        task.launchPath = "/usr/bin/which"
+        task.arguments = ["mise"]
+        
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        
+        do {
+            try task.run()
+            task.waitUntilExit()
+            
+            if task.terminationStatus == 0 {
+                // mise exists, check if XcodeBuildMCP is set up
+                checkXcodeBuildMCP()
+            } else {
+                setupMessage = "mise not found. Please install mise first."
+                setupComplete = false
+            }
+        } catch {
+            setupMessage = "Error checking setup: \(error.localizedDescription)"
+            setupComplete = false
+        }
+    }
+    
+    func checkXcodeBuildMCP() {
+        let task = Process()
+        task.launchPath = "/bin/sh"
+        task.arguments = ["-c", "mise list npm:xcodebuildmcp"]
+        
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        
+        do {
+            try task.run()
+            task.waitUntilExit()
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8), !output.isEmpty {
+                setupComplete = true
+                setupMessage = "XcodeBuildMCP is set up"
+            } else {
+                setupComplete = false
+                setupMessage = "XcodeBuildMCP not installed"
+            }
+        } catch {
+            setupMessage = "Error checking XcodeBuildMCP: \(error.localizedDescription)"
+            setupComplete = false
+        }
+    }
+    
+    func installMCPServer() {
+        isProcessing = true
+        setupMessage = "Installing XcodeBuildMCP..."
+        
+        // Create a script to install XcodeBuildMCP
+        let tempDir = FileManager.default.temporaryDirectory
+        let scriptURL = tempDir.appendingPathComponent("install_xcodebuildmcp.command")
+        
+        let scriptContent = """
+        #!/bin/bash
+        echo "Installing XcodeBuildMCP..."
+        
+        # Check for mise
+        if ! command -v mise &> /dev/null; then
+            echo "Installing mise..."
+            brew install mise
+        fi
+        
+        # Install XcodeBuildMCP
+        mise install npm:xcodebuildmcp@1.4.0
+        
+        # Create MCP config directory
+        mkdir -p ~/Library/Application\\ Support/Cursor/mcp
+        
+        # Create config file
+        cat > ~/Library/Application\\ Support/Cursor/mcp/config.json << EOF
+        {
+          "mcpServers": {
+            "XcodeBuildMCP": {
+              "command": "mise",
+              "args": [
+                "x",
+                "npm:xcodebuildmcp@1.4.0",
+                "--",
+                "xcodebuildmcp"
+              ]
+            }
+          }
+        }
+        EOF
+        
+        echo "Setup complete. Please restart the app."
+        read -p "Press any key to continue..." -n1 -s
+        """
+        
+        do {
+            try scriptContent.write(to: scriptURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+            
+            NSWorkspace.shared.open(scriptURL)
+            
+            isProcessing = false
+            setupMessage = "Installation started in Terminal. Please follow the instructions."
+        } catch {
+            isProcessing = false
+            setupMessage = "Error installing: \(error.localizedDescription)"
+        }
+    }
+
+    func startRecording() {
+        isRecording = true
+        response = nil
+        // Simulate recording for 3 seconds, then auto-stop
+        recordingTimer?.invalidate()
+        recordingTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { _ in
+            stopRecordingAndProcess()
+        }
+    }
+
+    func stopRecordingAndProcess() {
+        isRecording = false
+        isProcessing = true
+        recordingTimer?.invalidate()
+        
+        // Simulate transcription and MCP processing
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            self.response = "Using XcodeBuildMCP AI assistance. The request would be processed through the MCP server, which enables AI assistants to interact with Xcode projects safely."
+            self.isProcessing = false
+        }
+    }
+}
+
+struct RecordingIndicator: View {
+    @State private var animate = false
+    var body: some View {
+        Circle()
+            .fill(Color.red)
+            .frame(width: 14, height: 14)
+            .scaleEffect(animate ? 1.2 : 0.8)
+            .opacity(animate ? 0.7 : 1)
+            .animation(Animation.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: animate)
+            .onAppear { animate = true }
+    }
+}
+
+#Preview {
+    VoiceAssistantView()
 }
