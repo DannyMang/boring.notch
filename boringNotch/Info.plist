@@ -23,5 +23,9 @@
 	<array>
 		<dict/>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>We need access to your microphone for voice commands</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>We need speech recognition to understand your voice commands</string>
 </dict>
 </plist>

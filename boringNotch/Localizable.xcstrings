@@ -360,7 +360,13 @@
     "Enjoy your free time!" : {
 
     },
+    "Enter command" : {
+
+    },
     "Error" : {
+
+    },
+    "Error: %@" : {
 
     },
     "Exclude apps" : {
@@ -407,6 +413,12 @@
           }
         }
       }
+    },
+    "Goose AI Assistant" : {
+
+    },
+    "Goose Response:" : {
+
     },
     "Got it!" : {
 
@@ -639,10 +651,10 @@
         }
       }
     },
-    "Open Goose in Terminal" : {
+    "Open System Settings" : {
 
     },
-    "Open System Settings" : {
+    "Or type your command:" : {
 
     },
     "Percentage" : {
@@ -656,6 +668,9 @@
       }
     },
     "Plugged In" : {
+
+    },
+    "Processing query..." : {
 
     },
     "Progress bar" : {
@@ -717,6 +732,9 @@
     "Restart Boring Notch" : {
 
     },
+    "Run Help" : {
+
+    },
     "Running" : {
 
     },
@@ -738,6 +756,9 @@
 
     },
     "Selected animation" : {
+
+    },
+    "Send" : {
 
     },
     "Settings" : {
@@ -850,13 +871,7 @@
     "System features" : {
 
     },
-    "Terminal opened with Goose.\nPlease check the Terminal window and interact there." : {
-
-    },
     "TheBoringNotch" : {
-
-    },
-    "Thinking..." : {
 
     },
     "Time to Full Charge: %lld min" : {
@@ -915,7 +930,13 @@
     "Welcome window" : {
 
     },
+    "What is Goose?" : {
+
+    },
     "What's New" : {
+
+    },
+    "You said:" : {
 
     },
     "YouTube Music requires this third-party app to be installed: " : {

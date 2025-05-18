@@ -12,6 +12,7 @@ import Defaults
 import KeyboardShortcuts
 import SwiftUI
 import SwiftUIIntrospect
+import Speech
 
 struct ContentView: View {
     @EnvironmentObject var vm: BoringViewModel
@@ -536,19 +537,43 @@ struct FullScreenDropDelegate: DropDelegate {
 
 struct VoiceAssistantView: View {
     @State private var isRecording = false
-    @State private var gooseResponse: String? = nil
+    @State private var response: String? = nil
     @State private var isProcessing = false
     @State private var recordingTimer: Timer? = nil
-    @State private var terminalOpened = false
+    @State private var commandOutput: String = ""
+    @State private var commandError: String? = nil
+    @State private var debugLog: String = "Debug log will appear here"
+    @State private var transcribedText: String = ""
+    @State private var goosePath: String = "/usr/local/bin/goose"
+    @State private var manualCommand: String = ""
+    @State private var mcpInitialized: Bool = false
+    @State private var speechRecognitionAvailable: Bool = true
+    
+    // Audio recording properties
+    @State private var audioEngine = AVAudioEngine()
+    @State private var recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    @State private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    @State private var recognitionTask: SFSpeechRecognitionTask?
 
     var body: some View {
         VStack {
+            Text("Goose AI Assistant")
+                .font(.headline)
+                .padding(.top, 20)
+            
+            // Debug status
+            Text(debugLog)
+                .font(.caption)
+                .foregroundColor(.gray)
+                .padding(.horizontal)
+                .multilineTextAlignment(.center)
+            
             Spacer()
             Button(action: {
                 if !isRecording {
-                    startRecording()
+                    startRealRecording()
                 } else {
-                    stopRecordingAndSendToGoose()
+                    stopRealRecording()
                 }
             }) {
                 ZStack {
@@ -565,95 +590,442 @@ struct VoiceAssistantView: View {
             }
             .buttonStyle(PlainButtonStyle())
             .padding(.bottom, 8)
+            
             Text(isRecording ? "Listening... Tap to stop" : "Push to talk")
                 .font(.headline)
                 .foregroundColor(.gray)
+            
             if isRecording {
-                // Animated red dot
                 RecordingIndicator()
                     .padding(.top, 8)
             }
+            
             if isProcessing {
-                ProgressView("Thinking...")
+                ProgressView("Processing query...")
                     .padding(.top, 16)
             }
-            if terminalOpened {
-                Text("Terminal opened with Goose.\nPlease check the Terminal window and interact there.")
-                    .font(.body)
-                    .foregroundColor(.green)
-                    .padding(.top, 16)
-                    .multilineTextAlignment(.center)
-            } else if let response = gooseResponse {
-                Text(response)
-                    .font(.body)
-                    .foregroundColor(.white)
-                    .padding(.top, 16)
+            
+            if !transcribedText.isEmpty {
+                VStack(alignment: .leading) {
+                    Text("You said:")
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.secondary)
+                    
+                    Text(transcribedText)
+                        .font(.body)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                        .background(Color.gray.opacity(0.2))
+                        .cornerRadius(8)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+                .padding(.top, 16)
+            }
+            
+            if let error = commandError {
+                Text("Error: \(error)")
+                    .foregroundColor(.red)
+                    .font(.footnote)
+                    .padding(.top, 8)
+                    .padding(.horizontal)
                     .multilineTextAlignment(.center)
             }
             
-            if !terminalOpened {
-                Button("Open Goose in Terminal") {
-                    launchGooseDirectly()
+            if !commandOutput.isEmpty {
+                Text("Goose Response:")
+                    .font(.subheadline)
+                    .fontWeight(.bold)
+                    .padding(.top, 8)
+                
+                ScrollView {
+                    Text(commandOutput)
+                        .font(.body)
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.black.opacity(0.3))
+                        .cornerRadius(8)
+                        .padding(.horizontal)
+                        .multilineTextAlignment(.leading)
                 }
-                .padding(.top, 20)
+                .frame(maxHeight: 250)
+                .padding(.horizontal)
             }
+            
+            // Manual command entry section
+            VStack {
+                Text("Or type your command:")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                HStack {
+                    TextField("Enter command", text: $manualCommand)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .frame(height: 30)
+                    
+                    Button(action: {
+                        if !manualCommand.isEmpty {
+                            transcribedText = manualCommand
+                            executeGooseCommand(manualCommand)
+                            manualCommand = ""
+                        }
+                    }) {
+                        Text("Send")
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(6)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(manualCommand.isEmpty)
+                }
+                .padding(.horizontal)
+            }
+            .padding(.vertical)
+            
             Spacer()
+            
+            HStack(spacing: 20) {
+                Button("Run Help") {
+                    self.transcribedText = "help"
+                    executeGooseCommand("help")
+                }
+                
+                Button("What is Goose?") {
+                    self.transcribedText = "what is goose"
+                    executeGooseCommand("what is goose")
+                }
+            }
+            .padding(.bottom, 20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
-    }
-
-    func startRecording() {
-        isRecording = true
-        gooseResponse = nil
-        // Simulate recording for 3 seconds, then auto-stop
-        recordingTimer?.invalidate()
-        recordingTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { _ in
-            stopRecordingAndSendToGoose()
+        .onAppear {
+            debugLog = "Voice Assistant initialized"
+            print("Voice Assistant initialized - checking Goose path")
+            checkGoosePath()
+            requestSpeechPermission()
+        }
+        .onChange(of: goosePath) { oldValue, newValue in
+            if !newValue.isEmpty && newValue != oldValue {
+                // Goose path found, now initialize MCP
+                initializeMCP()
+            }
         }
     }
 
-    func stopRecordingAndSendToGoose() {
-        isRecording = false
-        isProcessing = true
-        recordingTimer?.invalidate()
-        
-        // Simulate transcription result
-        let transcribedText = "What is goose?"
-        
-        // Just launch goose directly
-        launchGooseDirectly()
+    func requestSpeechPermission() {
+        // Request speech recognition permission
+        SFSpeechRecognizer.requestAuthorization { status in
+            DispatchQueue.main.async {
+                let hasSpeechPermission = (status == .authorized)
+                self.updateDebugLog("Speech recognition permission: \(hasSpeechPermission)")
+                self.speechRecognitionAvailable = hasSpeechPermission
+                
+                if !hasSpeechPermission {
+                    self.commandError = "Speech recognition not authorized. Please use text input instead."
+                }
+            }
+        }
     }
     
-    func launchGooseDirectly() {
+    func startRealRecording() {
+        // Ensure the speech recognizer is available
+        guard let recognizer = recognizer, recognizer.isAvailable, speechRecognitionAvailable else {
+            updateDebugLog("Speech recognizer not available")
+            commandError = "Speech recognition not available. Please use text input instead."
+            return
+        }
+        
+        // Clean up any existing tasks first
+        if audioEngine.isRunning {
+            audioEngine.stop()
+            audioEngine.inputNode.removeTap(onBus: 0)
+            recognitionRequest?.endAudio()
+            recognitionTask?.cancel()
+            recognitionTask = nil
+            recognitionRequest = nil
+        }
+        
+        // Initialize the recognition request
+        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        guard let recognitionRequest = recognitionRequest else {
+            updateDebugLog("Unable to create speech recognition request")
+            return
+        }
+        
+        // Configure for continuous recognition
+        recognitionRequest.shouldReportPartialResults = true
+        
+        // Create and configure the audio engine
+        let inputNode = audioEngine.inputNode
+        let recordingFormat = inputNode.outputFormat(forBus: 0)
+        
+        // Install a tap on the input node
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
+            self.recognitionRequest?.append(buffer)
+        }
+        
+        // Start the audio engine
+        audioEngine.prepare()
         do {
-            // Create a temporary file with a shell script
-            let tempDir = FileManager.default.temporaryDirectory
-            let scriptURL = tempDir.appendingPathComponent("launch_goose.command")
+            try audioEngine.start()
+            isRecording = true
+            transcribedText = ""
+            updateDebugLog("Started voice recording")
             
-            // Write a script that CDs to the project directory and runs goose
-            let scriptContent = """
-            #!/bin/bash
-            cd "/Users/danielung/Desktop/projects/boring.notch" 
-            goose
-            exit
-            """
-            
-            try scriptContent.write(to: scriptURL, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
-            
-            // Open the script file directly which will launch Terminal
-            NSWorkspace.shared.open(scriptURL)
-            
-            // Update the UI
-            self.isProcessing = false
-            self.terminalOpened = true
-            self.gooseResponse = nil
-            
+            // Start speech recognition
+            recognitionTask = recognizer.recognitionTask(with: recognitionRequest) { result, error in
+                var isFinal = false
+                
+                if let result = result {
+                    // Update the transcribed text with the latest recognition result
+                    self.transcribedText = result.bestTranscription.formattedString
+                    isFinal = result.isFinal
+                }
+                
+                if error != nil || isFinal {
+                    // Stop recording if there's an error or the recognition is final
+                    self.audioEngine.stop()
+                    inputNode.removeTap(onBus: 0)
+                    
+                    if let error = error {
+                        let errorString = error.localizedDescription
+                        self.updateDebugLog("Recognition error: \(errorString)")
+                        
+                        // Handle specific AFAssistantErrorDomain error
+                        if errorString.contains("AFAssistantErrorDomain") && errorString.contains("1101") {
+                            self.speechRecognitionAvailable = false
+                            self.commandError = "Speech recognition service unavailable. Please use text input."
+                        }
+                        
+                        self.stopRealRecording()
+                    } else if isFinal {
+                        self.stopRealRecording()
+                    }
+                    
+                    self.recognitionRequest = nil
+                    self.recognitionTask = nil
+                }
+            }
         } catch {
-            print("Error launching Goose: \(error)")
-            self.isProcessing = false
-            self.gooseResponse = "Error launching Goose: \(error.localizedDescription)"
+            updateDebugLog("Failed to start recording: \(error)")
+            stopRealRecording()
+        }
+    }
+    
+    func stopRealRecording() {
+        // Make sure we're actually recording
+        if !isRecording {
+            return
+        }
+        
+        // Stop the audio engine
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        
+        // End the recognition request
+        recognitionRequest?.endAudio()
+        
+        // Clean up
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        recognitionRequest = nil
+        
+        isRecording = false
+        isProcessing = true
+        updateDebugLog("Stopped recording, processing: '\(transcribedText)'")
+        
+        // Process the transcribed text
+        if !transcribedText.isEmpty {
+            executeGooseCommand(transcribedText)
+        } else {
+            isProcessing = false
+            updateDebugLog("No speech detected")
+        }
+    }
+
+    func checkGoosePath() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = self.executeShellCommand("which goose")
+            DispatchQueue.main.async {
+                if let output = result.output, !output.isEmpty {
+                    self.goosePath = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.debugLog = "Goose found at: \(self.goosePath)"
+                    print("Goose found at: \(self.goosePath)")
+                    
+                    // Initialize MCP immediately after finding Goose
+                    self.initializeMCP()
+                } else {
+                    self.debugLog = "Goose not found on PATH: \(result.error ?? "unknown error")"
+                    print("Goose not found on PATH: \(result.error ?? "unknown error")")
+                }
+            }
+        }
+    }
+
+    func executeGooseCommand(_ query: String) {
+        isProcessing = true
+        commandError = nil
+        commandOutput = ""
+        
+        let normalizedQuery = query.replacingOccurrences(of: "'", with: "'\\''") // Escape single quotes
+        
+        print("Executing Goose command: \(query)")
+        debugLog = "Executing Goose command: '\(query)'"
+        
+        // Use the technique from the article to execute the command
+        DispatchQueue.global(qos: .userInitiated).async {
+            // Try using the detected goose path
+            let command = "echo '\(normalizedQuery)' | \(self.goosePath)"
+            print("Executing command: \(command)")
+            self.updateDebugLog("Running: \(command)")
+            
+            let result = self.executeShellCommand(command)
+            
+            DispatchQueue.main.async {
+                self.isProcessing = false
+                
+                if let error = result.error, !error.isEmpty {
+                    print("Error executing Goose: \(error)")
+                    self.updateDebugLog("Error executing Goose")
+                    self.commandError = "Failed to run Goose: \(error)"
+                } else if let output = result.output {
+                    print("Command succeeded with output length: \(output.count)")
+                    self.updateDebugLog("Command successful!")
+                    
+                    // Handle EOF errors in output
+                    if output.contains("Error: Session ended with error: EOF") {
+                        self.commandOutput = "The AI session timed out or was disconnected. Please try again."
+                    } else {
+                        self.commandOutput = self.formatGooseOutput(output)
+                    }
+                } else {
+                    print("No output received")
+                    self.updateDebugLog("No output received")
+                    self.commandError = "No output received from Goose"
+                }
+            }
+        }
+    }
+    
+    func updateDebugLog(_ message: String) {
+        DispatchQueue.main.async {
+            self.debugLog = message
+            print("DEBUG: \(message)")
+        }
+    }
+    
+    func executeShellCommand(_ command: String) -> (output: String?, error: String?) {
+        let task = Process()
+        task.launchPath = "/bin/bash"
+        task.arguments = ["-l", "-c", command]
+        
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        task.standardOutput = outputPipe
+        task.standardError = errorPipe
+        
+        do {
+            try task.run()
+            
+            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            
+            let output = String(data: outputData, encoding: .utf8)
+            let error = String(data: errorData, encoding: .utf8)
+            
+            print("Raw command output length: \(outputData.count) bytes")
+            if let output = output, !output.isEmpty {
+                print("Output: \(output.prefix(100))...")
+            }
+            if let error = error, !error.isEmpty {
+                print("Error: \(error)")
+            }
+            
+            task.waitUntilExit()
+            
+            if task.terminationStatus != 0 {
+                print("Process exited with code: \(task.terminationStatus)")
+                return (nil, error ?? "Process exited with code \(task.terminationStatus)")
+            }
+            
+            return (output, nil)
+        } catch {
+            print("Failed to run process: \(error.localizedDescription)")
+            return (nil, error.localizedDescription)
+        }
+    }
+
+    // Format Goose CLI output to extract just the AI response
+    func formatGooseOutput(_ output: String) -> String {
+        // Split the output into lines
+        let lines = output.components(separatedBy: .newlines)
+        
+        // Filter out log lines and extract the actual AI response
+        var processingResponse = false
+        var responseLines: [String] = []
+        
+        for line in lines {
+            // Skip log lines and headers
+            if line.contains("starting session") || 
+               line.contains("logging to") ||
+               line.contains("working directory:") ||
+               line.contains("Error: Session ended") {
+                continue
+            }
+            
+            // Skip prompt display line
+            if line.contains("Goose is running!") {
+                processingResponse = true
+                continue
+            }
+            
+            // Stop at the next prompt
+            if line.starts(with: "( O)>") {
+                if responseLines.isEmpty {
+                    processingResponse = true
+                    continue
+                } else {
+                    break
+                }
+            }
+            
+            // Capture the response
+            if processingResponse {
+                responseLines.append(line)
+            }
+        }
+        
+        let formattedResponse = responseLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return formattedResponse.isEmpty ? "No response from Goose" : formattedResponse
+    }
+    
+    // Function to run MCP after Goose is found
+    func initializeMCP() {
+        guard !mcpInitialized else { return } // Only run once
+        
+        mcpInitialized = true
+        debugLog = "Initializing MCP with Goose at: \(goosePath)"
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            // Run the exact MCP command
+            let mcpCommand = "npx -y @smithery/cli@latest run @browserbasehq/mcp-stagehand --profile sheer-chameleon-SI8B6T --key d2527900-4821-408a-b2c2-088f9f454921"
+            let result = self.executeShellCommand(mcpCommand)
+            
+            DispatchQueue.main.async {
+                if let error = result.error, !error.isEmpty {
+                    self.debugLog = "MCP initialization error: \(error)"
+                    print("MCP initialization error: \(error)")
+                } else if let output = result.output {
+                    self.debugLog = "MCP initialized successfully"
+                    print("MCP initialized with output: \(output)")
+                }
+            }
         }
     }
 }
